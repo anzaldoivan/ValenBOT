@@ -1,6 +1,10 @@
 const Discord = require("discord.js");
 const fs = require("fs");
 const client = new Discord.Client();
+const fetch = require("node-fetch");
+
+// Auth Token
+const { bottoken } = require("./Config/config.json");
 
 // let users = JSON.parse(fs.readFileSync("./userData.json", "utf8"));
 let users = require("./userData.json") || { ids: [userID] };
@@ -41,6 +45,56 @@ function sign(message, pos) {
   }
 }
 
+async function fetchUser(id) {
+  try {
+    const response = await fetch(
+      `https://iosoccer.com:44380/api/player/${id}`,
+      {
+        method: "GET",
+        credentials: "same-origin",
+      }
+    );
+    const userDB = await response.json();
+    return userDB;
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+async function fetchMatches(id) {
+  try {
+    const response = await fetch(
+      `https://iosoccer.com:44380/api/player-statistics/performance/continuous/${id}`,
+      {
+        method: "GET",
+        credentials: "same-origin",
+      }
+    );
+    const matchesjson = await response.json();
+    return matchesjson;
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+async function createUser(id, message) {
+  const userDB = await fetchUser(id);
+  const matchesjson = await fetchMatches(id);
+  console.log("RENDER USER CONSOLE LOG");
+  console.log(userDB);
+  console.log(matchesjson);
+  client.commands.get("User Adder").execute(message, userDB, matchesjson);
+}
+
+client.commands = new Discord.Collection();
+const commandFiles = fs
+  .readdirSync("./Commands")
+  .filter((file) => file.endsWith(".js"));
+for (const file of commandFiles) {
+  const command = require(`./Commands/${file}`);
+  client.commands.set(command.name, command);
+}
+
 client.on("ready", () => {
   console.log(`Bot is ready as ${client.user.tag}!`);
   client.user.setStatus("online");
@@ -54,12 +108,27 @@ client.on("ready", () => {
 });
 
 client.on("message", async (message) => {
+  const messages = require(`./Users/${message.guild.id}.json`);
+
   if (!message.content.startsWith(prefix)) return;
   if (message.author.bot) return;
+  let args = message.content.substring(prefix.length).split(" ");
 
   if (message.content === "$jota") {
     message.channel.send("Jota es gei");
   }
+
+  if (!fs.existsSync(`./Users/${message.guild.id}.json`))
+    fs.writeFileSync(
+      `./Users/${message.guild.id}.json`,
+      JSON.stringify({}),
+      (err) => {
+        if (err) {
+          console.log(err);
+          message.channel.send(err);
+        }
+      }
+    );
 
   if (message.content === "$lista" || message.content === "$list") {
     const embed = new Discord.MessageEmbed().addField(
@@ -83,19 +152,28 @@ client.on("message", async (message) => {
         } else {
           if (delanteros.includes(`<@${message.author.id}>`)) {
             currentPos = delanteros;
+          } else {
+            currentPos = null;
           }
         }
       }
     }
-    for (var i = 0; i < currentPos.length; i++) {
-      if (currentPos[i] === `<@${message.author.id}>`) {
-        currentPos.splice(i, 1);
-        message.channel.send(
-          `<@${message.author.id}> Removido de la lista de MM`
-        );
-        message.delete({ timeout: 1 });
+    if (currentPos != null) {
+      for (var i = 0; i < currentPos.length; i++) {
+        if (currentPos[i] === `<@${message.author.id}>`) {
+          currentPos.splice(i, 1);
+          message.channel.send(
+            `<@${message.author.id}> Removido de la lista de MM`
+          );
+          message.delete({ timeout: 1 });
+        }
+        console.log("Buscando");
       }
-      console.log("Buscando");
+    } else {
+      message.channel.send(
+        `<@${message.author.id}> No se encuentra en la lista de MM`
+      );
+      message.delete({ timeout: 1 });
     }
   }
 
@@ -156,33 +234,69 @@ client.on("message", async (message) => {
     }
   }
 
+  switch (args[0]) {
+    case "user":
+      // theID = messages[message.author.id].user;
+      let messageID = message.content.trim().slice(6);
+      console.log("The message ID sent on $user is: " + messageID);
+      createUser(messageID, message);
+      break;
+    case "info":
+      // theID = messages[message.author.id].user;
+      if (!messages[message.author.id]) {
+        message.channel.send(
+          "Usuario no encontrado.\nRecordar configurarlo utilizando $user ID. La ID se encuentra en http://iosoccer.com/player-list"
+        );
+      } else {
+        client.commands.get("User Info").execute(message);
+      }
+      break;
+    case "leaderboard":
+      client.commands.get("Leaderboard").execute(message);
+      break;
+    case "ready":
+      if (
+        gk.length >= 1 &&
+        defensores.length >= 4 &&
+        cm.length >= 2 &&
+        delanteros.length >= 4
+      ) {
+        client.commands
+          .get("Ready")
+          .execute(message, gk, defensores, cm, delanteros);
+      } else {
+        message.channel.send(
+          "Insuficientes jugadores para comenzar el matchmaking."
+        );
+        message.delete({ timeout: 1 });
+      }
+
+      break;
+  }
+  // if (message.content === "$user") {
+  //   const embed = new Discord.MessageEmbed().addField(
+  //     "Usuario Test",
+  //     "Test\nTest2"
+  //   );
+  //   message.channel.send(embed);
+  //   // message.delete({ timeout: 1 });
+  //   client.commands.get("User Adder").execute(message);
+  // }
+
   if (message.content === "$help") {
     const embed = new Discord.MessageEmbed().addField(
       "Lista de Comandos",
-      "$jota -> Te dice la verdad\n$staff -> Insulto generico al staff"
+      "$jota -> Te dice la verdad\n$staff -> Insulto generico al staff\n$user -> Crear usuario para matchmaking.\n$info -> Informacion de usuario (rango, steamID, etc)."
     );
     message.channel.send(embed);
     message.delete({ timeout: 1 });
   }
 
-  if (!users[message.author.id])
-    users[message.author.id] = {
-      points: 0,
-      level: 0,
-    };
-
-  if (message.content.startsWith(prefix + "level")) {
-    message.reply(
-      `You are currently level ${users.level}, with ${users.points} points.`
-    );
-    message.delete({ timeout: 1 });
+  if (message.content === "$s") {
+    message.channel.send("!s gk pelusa");
   }
-
-  //   fs.writeFile("./userData.json", JSON.stringify(users), (err) => {
-  //     if (err) console.error(err);
-  //   });
 
   // FIN DE COMANDOS
 });
 
-client.login("Nzc5NDkyOTM3MTc2MTg2ODgx.X7hVXg.ayR0yQ4e8mk65zaNhpKZ34YG5qE");
+client.login(bottoken);
